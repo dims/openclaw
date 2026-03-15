@@ -1,8 +1,7 @@
 import type { ModelCompatConfig } from "../config/types.models.js";
 import { stripUnsupportedSchemaKeywords } from "../plugin-sdk/provider-tools.js";
 import { resolveUnsupportedToolSchemaKeywords } from "../plugins/provider-model-compat.js";
-import { copyPluginToolMeta } from "../plugins/tools.js";
-import { copyChannelAgentToolMeta } from "./channel-tools.js";
+import { preservePluginToolMeta } from "../plugins/tools.js";
 import type { AnyAgentTool } from "./pi-tools.types.js";
 import { cleanSchemaForGemini } from "./schema/clean-for-gemini.js";
 
@@ -71,11 +70,6 @@ export function normalizeToolParameters(
   tool: AnyAgentTool,
   options?: { modelProvider?: string; modelId?: string; modelCompat?: ModelCompatConfig },
 ): AnyAgentTool {
-  function preserveToolMeta(target: AnyAgentTool): AnyAgentTool {
-    copyPluginToolMeta(tool, target);
-    copyChannelAgentToolMeta(tool as never, target as never);
-    return target;
-  }
   const schema =
     tool.parameters && typeof tool.parameters === "object"
       ? (tool.parameters as Record<string, unknown>)
@@ -112,7 +106,7 @@ export function normalizeToolParameters(
   // If schema already has type + properties (no top-level anyOf to merge),
   // clean it for Gemini/xAI compatibility as appropriate.
   if ("type" in schema && "properties" in schema && !Array.isArray(schema.anyOf)) {
-    return preserveToolMeta({
+    return preservePluginToolMeta(tool, {
       ...tool,
       parameters: applyProviderCleaning(schema),
     });
@@ -127,7 +121,7 @@ export function normalizeToolParameters(
     !Array.isArray(schema.oneOf)
   ) {
     const schemaWithType = { ...schema, type: "object" };
-    return preserveToolMeta({
+    return preservePluginToolMeta(tool, {
       ...tool,
       parameters: applyProviderCleaning(schemaWithType),
     });
@@ -196,7 +190,7 @@ export function normalizeToolParameters(
     additionalProperties: "additionalProperties" in schema ? schema.additionalProperties : true,
   };
 
-  return preserveToolMeta({
+  return preservePluginToolMeta(tool, {
     ...tool,
     // Flatten union schemas into a single object schema:
     // - Gemini doesn't allow top-level `type` together with `anyOf`.

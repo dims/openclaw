@@ -2,11 +2,10 @@ import type { ToolLoopDetectionConfig } from "../config/types.tools.js";
 import type { SessionState } from "../logging/diagnostic-session-state.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { getGlobalHookRunner } from "../plugins/hook-runner-global.js";
-import { copyPluginToolMeta } from "../plugins/tools.js";
+import { preservePluginToolMeta } from "../plugins/tools.js";
 import { PluginApprovalResolutions, type PluginApprovalResolution } from "../plugins/types.js";
 import { createLazyRuntimeSurface } from "../shared/lazy-runtime.js";
 import { isPlainObject } from "../utils.js";
-import { copyChannelAgentToolMeta } from "./channel-tools.js";
 import { normalizeToolName } from "./tool-policy.js";
 import type { AnyAgentTool } from "./tools/common.js";
 import { callGatewayTool } from "./tools/gateway.js";
@@ -418,13 +417,11 @@ export function wrapToolWithBeforeToolCallHook(
       }
     },
   };
-  copyPluginToolMeta(tool, wrappedTool);
-  copyChannelAgentToolMeta(tool as never, wrappedTool as never);
   Object.defineProperty(wrappedTool, BEFORE_TOOL_CALL_WRAPPED, {
     value: true,
     enumerable: true,
   });
-  return wrappedTool;
+  return preservePluginToolMeta(tool, wrappedTool);
 }
 
 export function isToolWrappedWithBeforeToolCallHook(tool: AnyAgentTool): boolean {
