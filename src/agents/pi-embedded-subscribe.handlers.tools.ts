@@ -14,6 +14,7 @@ import type {
 } from "./pi-embedded-subscribe.handlers.types.js";
 import {
   extractToolResultMediaArtifact,
+  extractToolResultMediaPaths,
   extractMessagingToolSend,
   extractToolErrorMessage,
   extractToolResultText,
@@ -237,21 +238,17 @@ function readExecApprovalUnavailableDetails(result: unknown): {
 async function emitToolResultOutput(params: {
   ctx: ToolHandlerContext;
   toolName: string;
+  rawToolName: string;
   meta?: string;
   isToolError: boolean;
   result: unknown;
   sanitizedResult: unknown;
 }) {
-  const { ctx, toolName, meta, isToolError, result, sanitizedResult } = params;
-  const hasStructuredMedia =
-    result &&
-    typeof result === "object" &&
-    (result as { details?: unknown }).details &&
-    typeof (result as { details?: unknown }).details === "object" &&
-    !Array.isArray((result as { details?: unknown }).details) &&
-    typeof ((result as { details?: { media?: unknown } }).details?.media ?? undefined) ===
-      "object" &&
-    !Array.isArray((result as { details?: { media?: unknown } }).details?.media);
+  const { ctx, toolName, rawToolName, meta, isToolError, result, sanitizedResult } = params;
+  if (!ctx.params.onToolResult) {
+    return;
+  }
+
   const approvalPending = readExecApprovalPendingDetails(result);
   if (!isToolError && approvalPending) {
     if (!ctx.params.onToolResult) {
@@ -301,10 +298,7 @@ async function emitToolResultOutput(params: {
   if (ctx.shouldEmitToolOutput()) {
     const outputText = extractToolResultText(sanitizedResult);
     if (outputText) {
-      ctx.emitToolOutput(toolName, meta, outputText, result);
-    }
-    if (!hasStructuredMedia) {
-      return;
+      ctx.emitToolOutput(toolName, meta, outputText, rawToolName);
     }
   }
 
@@ -312,17 +306,23 @@ async function emitToolResultOutput(params: {
     return;
   }
 
-  const mediaReply = extractToolResultMediaArtifact(result);
-  if (!mediaReply) {
+  // emitToolOutput() already handles MEDIA: directives when enabled; this path
+  // only sends raw media URLs for non-verbose delivery mode.
+  const mediaArtifact = extractToolResultMediaArtifact(result);
+  if (!mediaArtifact) {
     return;
   }
-  const mediaUrls = filterToolResultMediaUrls(toolName, mediaReply.mediaUrls, result);
+  const mediaUrls = filterToolResultMediaUrls(
+    rawToolName,
+    mediaArtifact.mediaUrls,
+    ctx.builtinToolNames,
+  );
   if (mediaUrls.length === 0) {
     return;
   }
   queuePendingToolMedia(ctx, {
     mediaUrls,
-    ...(mediaReply.audioAsVoice ? { audioAsVoice: true } : {}),
+    ...(mediaArtifact.audioAsVoice ? { audioAsVoice: true } : {}),
   });
 }
 
@@ -459,7 +459,8 @@ export async function handleToolExecutionEnd(
     result?: unknown;
   },
 ) {
-  const toolName = normalizeToolName(String(evt.toolName));
+  const rawToolName = String(evt.toolName);
+  const toolName = normalizeToolName(rawToolName);
   const toolCallId = String(evt.toolCallId);
   const runId = ctx.params.runId;
   const isError = Boolean(evt.isError);
@@ -576,7 +577,15 @@ export async function handleToolExecutionEnd(
     `embedded run tool end: runId=${ctx.params.runId} tool=${toolName} toolCallId=${toolCallId}`,
   );
 
-  await emitToolResultOutput({ ctx, toolName, meta, isToolError, result, sanitizedResult });
+  await emitToolResultOutput({
+    ctx,
+    toolName,
+    rawToolName,
+    meta,
+    isToolError,
+    result,
+    sanitizedResult,
+  });
 
   // Run after_tool_call plugin hook (fire-and-forget)
   const hookRunnerAfter = ctx.hookRunner ?? getGlobalHookRunner();
