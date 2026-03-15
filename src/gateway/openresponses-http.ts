@@ -410,6 +410,7 @@ async function runResponsesAgentCommand(params: {
   message: string;
   images: ImageContent[];
   clientTools: ClientToolDefinition[];
+  onPreflightPassed?: () => void | Promise<void>;
   extraSystemPrompt: string;
   modelOverride?: string;
   streamParams: { maxTokens: number } | undefined;
@@ -423,6 +424,7 @@ async function runResponsesAgentCommand(params: {
       message: params.message,
       images: params.images.length > 0 ? params.images : undefined,
       clientTools: params.clientTools.length > 0 ? params.clientTools : undefined,
+      onPreflightPassed: params.onPreflightPassed,
       extraSystemPrompt: params.extraSystemPrompt || undefined,
       model: params.modelOverride,
       streamParams: params.streamParams ?? undefined,
@@ -771,14 +773,9 @@ export async function handleOpenResponsesHttpRequest(
     } catch (err) {
       logWarn(`openresponses: non-stream response failed: ${String(err)}`);
       if (isClientToolNameConflictError(err)) {
-        const response = createResponseResource({
-          id: responseId,
-          model,
-          status: "failed",
-          output: [],
-          error: { code: "invalid_request_error", message: "invalid tool configuration" },
+        sendJson(res, 400, {
+          error: { message: "invalid tool configuration", type: "invalid_request_error" },
         });
-        sendJson(res, 400, response);
         return true;
       }
       const response = createResponseResource({
@@ -798,14 +795,47 @@ export async function handleOpenResponsesHttpRequest(
   // Streaming mode
   // ─────────────────────────────────────────────────────────────────────────
 
-  setSseHeaders(res);
-
   let accumulatedText = "";
   let sawAssistantDelta = false;
   let closed = false;
+  let sseStarted = false;
   let unsubscribe = () => {};
   let finalUsage: Usage | undefined;
   let finalizeRequested: { status: ResponseResource["status"]; text: string } | null = null;
+  const initialResponse = createResponseResource({
+    id: responseId,
+    model,
+    status: "in_progress",
+    output: [],
+  });
+  const outputItem = createAssistantOutputItem({
+    id: outputItemId,
+    text: "",
+    status: "in_progress",
+  });
+
+  const startStream = () => {
+    if (closed || sseStarted) {
+      return;
+    }
+
+    sseStarted = true;
+    setSseHeaders(res);
+    writeSseEvent(res, { type: "response.created", response: initialResponse });
+    writeSseEvent(res, { type: "response.in_progress", response: initialResponse });
+    writeSseEvent(res, {
+      type: "response.output_item.added",
+      output_index: 0,
+      item: outputItem,
+    });
+    writeSseEvent(res, {
+      type: "response.content_part.added",
+      item_id: outputItemId,
+      output_index: 0,
+      content_index: 0,
+      part: { type: "output_text", text: "" },
+    });
+  };
 
   const maybeFinalize = () => {
     if (closed) {
@@ -817,6 +847,8 @@ export async function handleOpenResponsesHttpRequest(
     if (!finalUsage) {
       return;
     }
+
+    startStream();
     const usage = finalUsage;
 
     closed = true;
@@ -872,39 +904,6 @@ export async function handleOpenResponsesHttpRequest(
     maybeFinalize();
   };
 
-  // Send initial events
-  const initialResponse = createResponseResource({
-    id: responseId,
-    model,
-    status: "in_progress",
-    output: [],
-  });
-
-  writeSseEvent(res, { type: "response.created", response: initialResponse });
-  writeSseEvent(res, { type: "response.in_progress", response: initialResponse });
-
-  // Add output item
-  const outputItem = createAssistantOutputItem({
-    id: outputItemId,
-    text: "",
-    status: "in_progress",
-  });
-
-  writeSseEvent(res, {
-    type: "response.output_item.added",
-    output_index: 0,
-    item: outputItem,
-  });
-
-  // Add content part
-  writeSseEvent(res, {
-    type: "response.content_part.added",
-    item_id: outputItemId,
-    output_index: 0,
-    content_index: 0,
-    part: { type: "output_text", text: "" },
-  });
-
   unsubscribe = onAgentEvent((evt) => {
     if (evt.runId !== responseId) {
       return;
@@ -921,6 +920,7 @@ export async function handleOpenResponsesHttpRequest(
 
       sawAssistantDelta = true;
       accumulatedText += content;
+      startStream();
 
       writeSseEvent(res, {
         type: "response.output_text.delta",
@@ -953,6 +953,7 @@ export async function handleOpenResponsesHttpRequest(
         message: prompt.message,
         images,
         clientTools: resolvedClientTools,
+        onPreflightPassed: startStream,
         extraSystemPrompt,
         modelOverride,
         streamParams,
@@ -1063,6 +1064,75 @@ export async function handleOpenResponsesHttpRequest(
       // Fallback: if no streaming deltas were received, send the full response as text
       if (!sawAssistantDelta) {
         const payloads = resultAny.payloads;
+        const meta = resultAny.meta;
+        const { stopReason, pendingToolCalls } = resolveStopReasonAndPendingToolCalls(meta);
+
+        // If agent called a client tool, emit function_call instead of text
+        if (stopReason === "tool_calls" && pendingToolCalls && pendingToolCalls.length > 0) {
+          const functionCall = pendingToolCalls[0];
+          const usage = finalUsage ?? createEmptyUsage();
+          startStream();
+
+          writeSseEvent(res, {
+            type: "response.output_text.done",
+            item_id: outputItemId,
+            output_index: 0,
+            content_index: 0,
+            text: "",
+          });
+          writeSseEvent(res, {
+            type: "response.content_part.done",
+            item_id: outputItemId,
+            output_index: 0,
+            content_index: 0,
+            part: { type: "output_text", text: "" },
+          });
+
+          const completedItem = createAssistantOutputItem({
+            id: outputItemId,
+            text: "",
+            status: "completed",
+          });
+          writeSseEvent(res, {
+            type: "response.output_item.done",
+            output_index: 0,
+            item: completedItem,
+          });
+
+          const functionCallItemId = `call_${randomUUID()}`;
+          const functionCallItem = {
+            type: "function_call" as const,
+            id: functionCallItemId,
+            call_id: functionCall.id,
+            name: functionCall.name,
+            arguments: functionCall.arguments,
+          };
+          writeSseEvent(res, {
+            type: "response.output_item.added",
+            output_index: 1,
+            item: functionCallItem,
+          });
+          writeSseEvent(res, {
+            type: "response.output_item.done",
+            output_index: 1,
+            item: { ...functionCallItem, status: "completed" as const },
+          });
+
+          const incompleteResponse = createResponseResource({
+            id: responseId,
+            model,
+            status: "incomplete",
+            output: [completedItem, functionCallItem],
+            usage,
+          });
+          closed = true;
+          unsubscribe();
+          writeSseEvent(res, { type: "response.completed", response: incompleteResponse });
+          writeDone(res);
+          res.end();
+          return;
+        }
+
         const content =
           Array.isArray(payloads) && payloads.length > 0
             ? payloads
@@ -1073,6 +1143,7 @@ export async function handleOpenResponsesHttpRequest(
 
         accumulatedText = content;
         sawAssistantDelta = true;
+        startStream();
 
         writeSseEvent(res, {
           type: "response.output_text.delta",
@@ -1088,7 +1159,17 @@ export async function handleOpenResponsesHttpRequest(
         return;
       }
 
+      if (!sseStarted && isClientToolNameConflictError(err)) {
+        closed = true;
+        unsubscribe();
+        sendJson(res, 400, {
+          error: { message: "invalid tool configuration", type: "invalid_request_error" },
+        });
+        return;
+      }
+
       finalUsage = finalUsage ?? createEmptyUsage();
+      startStream();
       if (isClientToolNameConflictError(err)) {
         const errorResponse = createResponseResource({
           id: responseId,
