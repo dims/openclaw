@@ -51,8 +51,12 @@ function normalizeHostnameSet(values?: string[]): Set<string> {
   return new Set(values.map((value) => normalizeHostname(value)).filter(Boolean));
 }
 
-function normalizeHostnameAllowlist(values?: string[]): string[] {
-  if (!values || values.length === 0) {
+// Returns `null` when not configured (allow all), `[]` when explicit empty (deny all).
+function normalizeHostnameAllowlist(values?: string[]): string[] | null {
+  if (values === undefined || values === null) {
+    return null;
+  }
+  if (values.length === 0) {
     return [];
   }
   return Array.from(
@@ -92,9 +96,12 @@ function isHostnameAllowedByPattern(hostname: string, pattern: string): boolean 
   return hostname === pattern;
 }
 
-function matchesHostnameAllowlist(hostname: string, allowlist: string[]): boolean {
-  if (allowlist.length === 0) {
+function matchesHostnameAllowlist(hostname: string, allowlist: string[] | null): boolean {
+  if (allowlist === null) {
     return true;
+  }
+  if (allowlist.length === 0) {
+    return false;
   }
   return allowlist.some((pattern) => isHostnameAllowedByPattern(hostname, pattern));
 }
