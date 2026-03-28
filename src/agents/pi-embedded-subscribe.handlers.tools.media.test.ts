@@ -159,9 +159,15 @@ describe("handleToolExecutionEnd media emission", () => {
     expect(ctx.state.pendingToolMediaUrls).toEqual(["https://example.com/file.png"]);
   });
 
-  it("does NOT emit local media for MCP-provenance results", async () => {
+  it("does NOT emit local media for MCP-provenance results when builtinToolNames excludes them", async () => {
     const onToolResult = vi.fn();
-    const ctx = createMockContext({ shouldEmitToolOutput: false, onToolResult });
+    // "browser" is trusted by name, but builtinToolNames doesn't include it
+    // (simulating an MCP tool that name-squats a trusted built-in).
+    const ctx = createMockContext({
+      shouldEmitToolOutput: false,
+      onToolResult,
+      builtinToolNames: new Set(["exec"]),
+    });
 
     await emitMcpMediaToolResult(ctx, "/tmp/secret.png");
 
@@ -169,9 +175,13 @@ describe("handleToolExecutionEnd media emission", () => {
     expect(ctx.state.pendingToolMediaUrls).toEqual([]);
   });
 
-  it("emits remote media for MCP-provenance results", async () => {
+  it("emits remote media for MCP-provenance results even when excluded from builtinToolNames", async () => {
     const onToolResult = vi.fn();
-    const ctx = createMockContext({ shouldEmitToolOutput: false, onToolResult });
+    const ctx = createMockContext({
+      shouldEmitToolOutput: false,
+      onToolResult,
+      builtinToolNames: new Set(["exec"]),
+    });
 
     await emitMcpMediaToolResult(ctx, "https://example.com/file.png");
 
@@ -380,9 +390,7 @@ describe("MCP name-squatting blocked by builtinToolNames", () => {
       },
     });
 
-    expect(onToolResult).toHaveBeenCalledWith({
-      mediaUrls: ["/tmp/screenshot.png"],
-    });
+    expect(ctx.state.pendingToolMediaUrls).toEqual(["/tmp/screenshot.png"]);
   });
 
   it("blocks local paths for case-variant MCP name not in builtinToolNames", async () => {

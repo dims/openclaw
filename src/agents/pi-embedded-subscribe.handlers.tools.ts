@@ -14,7 +14,6 @@ import type {
 } from "./pi-embedded-subscribe.handlers.types.js";
 import {
   extractToolResultMediaArtifact,
-  extractToolResultMediaPaths,
   extractMessagingToolSend,
   extractToolErrorMessage,
   extractToolResultText,
@@ -248,6 +247,15 @@ async function emitToolResultOutput(params: {
   if (!ctx.params.onToolResult) {
     return;
   }
+  const hasStructuredMedia =
+    result &&
+    typeof result === "object" &&
+    (result as { details?: unknown }).details &&
+    typeof (result as { details?: unknown }).details === "object" &&
+    !Array.isArray((result as { details?: unknown }).details) &&
+    typeof ((result as { details?: { media?: unknown } }).details?.media ?? undefined) ===
+      "object" &&
+    !Array.isArray((result as { details?: { media?: unknown } }).details?.media);
 
   const approvalPending = readExecApprovalPendingDetails(result);
   if (!isToolError && approvalPending) {
@@ -299,6 +307,9 @@ async function emitToolResultOutput(params: {
     const outputText = extractToolResultText(sanitizedResult);
     if (outputText) {
       ctx.emitToolOutput(toolName, meta, outputText, rawToolName);
+    }
+    if (!hasStructuredMedia) {
+      return;
     }
   }
 

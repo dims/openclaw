@@ -537,7 +537,7 @@ describe("agentCommand", () => {
       const onPreflightPassed = vi.fn();
       const clientTools = [
         {
-          type: "function",
+          type: "function" as const,
           function: {
             name: "web_search",
             description: "test client tool",

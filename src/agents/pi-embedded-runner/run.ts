@@ -500,7 +500,6 @@ export async function runEmbeddedPiAgent(
             images: params.images,
             clientTools: params.clientTools,
             disableTools: params.disableTools,
-            clientTools: params.clientTools,
             onPreflightPassed: params.onPreflightPassed,
             provider,
             modelId,
