@@ -6,6 +6,7 @@ import { preservePluginToolMeta } from "../plugins/tools.js";
 import { PluginApprovalResolutions, type PluginApprovalResolution } from "../plugins/types.js";
 import { createLazyRuntimeSurface } from "../shared/lazy-runtime.js";
 import { isPlainObject } from "../utils.js";
+import { copyChannelAgentToolMeta } from "./channel-tools.js";
 import { normalizeToolName } from "./tool-policy.js";
 import type { AnyAgentTool } from "./tools/common.js";
 import { callGatewayTool } from "./tools/gateway.js";
@@ -421,7 +422,9 @@ export function wrapToolWithBeforeToolCallHook(
     value: true,
     enumerable: true,
   });
-  return preservePluginToolMeta(tool, wrappedTool);
+  preservePluginToolMeta(tool, wrappedTool);
+  copyChannelAgentToolMeta(tool as never, wrappedTool as never);
+  return wrappedTool;
 }
 
 export function isToolWrappedWithBeforeToolCallHook(tool: AnyAgentTool): boolean {

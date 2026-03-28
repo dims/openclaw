@@ -9,6 +9,7 @@ import {
   hasInterSessionUserProvenance,
   normalizeInputProvenance,
 } from "../../sessions/input-provenance.js";
+import { copyChannelAgentToolMeta } from "../channel-tools.js";
 import { resolveImageSanitizationLimits } from "../image-sanitization.js";
 import {
   downgradeOpenAIFunctionCallReasoningPairs,
@@ -420,12 +421,15 @@ export function sanitizeToolsForGoogle<
     if (!tool.parameters || typeof tool.parameters !== "object") {
       return tool;
     }
-    return preservePluginToolMeta(tool, {
+    const wrapped = {
       ...tool,
       parameters: cleanToolSchemaForGemini(
         tool.parameters as Record<string, unknown>,
       ) as TSchemaType,
-    });
+    };
+    preservePluginToolMeta(tool, wrapped);
+    copyChannelAgentToolMeta(tool as never, wrapped as never);
+    return wrapped;
   });
 }
 
