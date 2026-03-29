@@ -244,9 +244,6 @@ async function emitToolResultOutput(params: {
   sanitizedResult: unknown;
 }) {
   const { ctx, toolName, rawToolName, meta, isToolError, result, sanitizedResult } = params;
-  if (!ctx.params.onToolResult) {
-    return;
-  }
   const hasStructuredMedia =
     result &&
     typeof result === "object" &&
