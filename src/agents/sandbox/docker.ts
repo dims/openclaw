@@ -227,13 +227,18 @@ export async function readDockerContainerEnvVar(
 
 export async function readDockerNetworkGateway(network: string): Promise<string | null> {
   const result = await execDocker(
-    ["network", "inspect", "-f", "{{range .IPAM.Config}}{{.Gateway}}{{end}}", network],
+    ["network", "inspect", "-f", "{{range .IPAM.Config}}{{.Gateway}}\n{{end}}", network],
     { allowFailure: true },
   );
   if (result.code !== 0) {
     return null;
   }
-  const gw = result.stdout.trim();
+  // Take the first non-empty gateway (handles dual-stack / multi-subnet networks).
+  const gw =
+    result.stdout
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .find(Boolean) ?? "";
   return gw || null;
 }
 
