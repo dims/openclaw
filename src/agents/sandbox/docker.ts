@@ -225,6 +225,18 @@ export async function readDockerContainerEnvVar(
   return null;
 }
 
+export async function readDockerNetworkGateway(network: string): Promise<string | null> {
+  const result = await execDocker(
+    ["network", "inspect", "-f", "{{range .IPAM.Config}}{{.Gateway}}{{end}}", network],
+    { allowFailure: true },
+  );
+  if (result.code !== 0) {
+    return null;
+  }
+  const gw = result.stdout.trim();
+  return gw || null;
+}
+
 export async function readDockerPort(containerName: string, port: number) {
   const result = await execDocker(["port", containerName, `${port}/tcp`], {
     allowFailure: true,

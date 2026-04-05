@@ -1,4 +1,5 @@
 import { resolveSandboxConfigForAgent } from "../agents/sandbox/config.js";
+import { DEFAULT_SANDBOX_BROWSER_NETWORK } from "../agents/sandbox/constants.js";
 import { isDangerousNetworkMode, normalizeNetworkMode } from "../agents/sandbox/network-mode.js";
 /**
  * Synchronous security audit collector functions.
@@ -938,10 +939,16 @@ export function collectSandboxDangerousConfigFindings(cfg: OpenClawConfig): Secu
   }
 
   const browserExposurePaths: string[] = [];
+  const isBridgeLikeNetwork = (network: string): boolean => {
+    const n = network.trim().toLowerCase();
+    // "none" has no peers; "host" is flagged separately as dangerous.
+    // The dedicated default gets runtime auto-derived source range.
+    return n !== "none" && n !== "host" && n !== DEFAULT_SANDBOX_BROWSER_NETWORK;
+  };
   const defaultBrowser = resolveSandboxConfigForAgent(cfg).browser;
   if (
     defaultBrowser.enabled &&
-    defaultBrowser.network.trim().toLowerCase() === "bridge" &&
+    isBridgeLikeNetwork(defaultBrowser.network) &&
     !defaultBrowser.cdpSourceRange?.trim()
   ) {
     browserExposurePaths.push("agents.defaults.sandbox.browser");
@@ -954,7 +961,7 @@ export function collectSandboxDangerousConfigFindings(cfg: OpenClawConfig): Secu
     if (!browser.enabled) {
       continue;
     }
-    if (browser.network.trim().toLowerCase() !== "bridge") {
+    if (!isBridgeLikeNetwork(browser.network)) {
       continue;
     }
     if (browser.cdpSourceRange?.trim()) {
@@ -968,7 +975,7 @@ export function collectSandboxDangerousConfigFindings(cfg: OpenClawConfig): Secu
       severity: "warn",
       title: "Sandbox browser CDP may be reachable by peer containers",
       detail:
-        "These sandbox browser configs use Docker bridge networking with no CDP source restriction:\n" +
+        "These sandbox browser configs use a shared Docker bridge network with no explicit CDP source restriction:\n" +
         browserExposurePaths.map((entry) => `- ${entry}`).join("\n"),
       remediation:
         "Set sandbox.browser.network to a dedicated bridge network (recommended default: openclaw-sandbox-browser), " +

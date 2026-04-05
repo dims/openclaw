@@ -12,6 +12,7 @@ const dockerMocks = vi.hoisted(() => ({
   execDocker: vi.fn(),
   readDockerContainerEnvVar: vi.fn(),
   readDockerContainerLabel: vi.fn(),
+  readDockerNetworkGateway: vi.fn(),
   readDockerPort: vi.fn(),
 }));
 
@@ -33,6 +34,7 @@ vi.mock("./docker.js", async () => {
     execDocker: dockerMocks.execDocker,
     readDockerContainerEnvVar: dockerMocks.readDockerContainerEnvVar,
     readDockerContainerLabel: dockerMocks.readDockerContainerLabel,
+    readDockerNetworkGateway: dockerMocks.readDockerNetworkGateway,
     readDockerPort: dockerMocks.readDockerPort,
   };
 });
@@ -111,6 +113,7 @@ describe("ensureSandboxBrowser create args", () => {
     dockerMocks.execDocker.mockClear();
     dockerMocks.readDockerContainerEnvVar.mockClear();
     dockerMocks.readDockerContainerLabel.mockClear();
+    dockerMocks.readDockerNetworkGateway.mockClear();
     dockerMocks.readDockerPort.mockClear();
     registryMocks.readBrowserRegistry.mockClear();
     registryMocks.updateBrowserRegistry.mockClear();
@@ -126,6 +129,7 @@ describe("ensureSandboxBrowser create args", () => {
     });
     dockerMocks.readDockerContainerLabel.mockResolvedValue(null);
     dockerMocks.readDockerContainerEnvVar.mockResolvedValue(null);
+    dockerMocks.readDockerNetworkGateway.mockResolvedValue("172.21.0.1");
     dockerMocks.readDockerPort.mockImplementation(async (_containerName: string, port: number) => {
       if (port === 9222) {
         return 49100;
@@ -235,5 +239,51 @@ describe("ensureSandboxBrowser create args", () => {
     const createArgs = findDockerArgsCall(dockerMocks.execDocker.mock.calls, "create");
     const labels = collectDockerFlagValues(createArgs ?? [], "--label");
     expect(labels).toContain(`openclaw.mountFormatVersion=${SANDBOX_MOUNT_FORMAT_VERSION}`);
+  });
+
+  it("auto-derives CDP source range from Docker network gateway", async () => {
+    dockerMocks.readDockerNetworkGateway.mockResolvedValue("172.21.0.1");
+
+    await ensureSandboxBrowser({
+      scopeKey: "session:test",
+      workspaceDir: "/tmp/workspace",
+      agentWorkspaceDir: "/tmp/workspace",
+      cfg: buildConfig(false),
+    });
+
+    const createArgs = findDockerArgsCall(dockerMocks.execDocker.mock.calls, "create");
+    const envEntries = collectDockerFlagValues(createArgs ?? [], "-e");
+    expect(envEntries).toContain("OPENCLAW_BROWSER_CDP_SOURCE_RANGE=172.21.0.1/32");
+  });
+
+  it("uses explicit cdpSourceRange over auto-derived gateway", async () => {
+    dockerMocks.readDockerNetworkGateway.mockResolvedValue("172.21.0.1");
+    const cfg = buildConfig(false);
+    cfg.browser.cdpSourceRange = "10.0.0.0/24";
+
+    await ensureSandboxBrowser({
+      scopeKey: "session:test",
+      workspaceDir: "/tmp/workspace",
+      agentWorkspaceDir: "/tmp/workspace",
+      cfg,
+    });
+
+    const createArgs = findDockerArgsCall(dockerMocks.execDocker.mock.calls, "create");
+    const envEntries = collectDockerFlagValues(createArgs ?? [], "-e");
+    expect(envEntries).toContain("OPENCLAW_BROWSER_CDP_SOURCE_RANGE=10.0.0.0/24");
+    expect(dockerMocks.readDockerNetworkGateway).not.toHaveBeenCalled();
+  });
+
+  it("throws when CDP source range cannot be derived", async () => {
+    dockerMocks.readDockerNetworkGateway.mockResolvedValue(null);
+
+    await expect(
+      ensureSandboxBrowser({
+        scopeKey: "session:test",
+        workspaceDir: "/tmp/workspace",
+        agentWorkspaceDir: "/tmp/workspace",
+        cfg: buildConfig(false),
+      }),
+    ).rejects.toThrow(/Cannot derive CDP source range/);
   });
 });

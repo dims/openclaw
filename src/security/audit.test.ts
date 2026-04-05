@@ -1339,6 +1339,27 @@ describe("security audit", () => {
           expect(hasFinding(res, "sandbox.browser_cdp_bridge_unrestricted")).toBe(false);
         },
       },
+      {
+        name: "warns for custom shared bridge network without cdpSourceRange",
+        run: async () =>
+          audit({
+            agents: {
+              defaults: {
+                sandbox: {
+                  mode: "all",
+                  browser: { enabled: true, network: "my-shared-bridge" },
+                },
+              },
+            },
+          }),
+        assert: (res: SecurityAuditReport) => {
+          const finding = res.findings.find(
+            (f) => f.checkId === "sandbox.browser_cdp_bridge_unrestricted",
+          );
+          expect(finding?.severity).toBe("warn");
+          expect(finding?.detail).toContain("agents.defaults.sandbox.browser");
+        },
+      },
     ] as const;
 
     await runAuditCases(cases);

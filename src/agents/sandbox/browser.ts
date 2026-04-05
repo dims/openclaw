@@ -22,6 +22,7 @@ import {
   execDocker,
   readDockerContainerEnvVar,
   readDockerContainerLabel,
+  readDockerNetworkGateway,
   readDockerPort,
 } from "./docker.js";
 import {
@@ -227,6 +228,20 @@ export async function ensureSandboxBrowser(params: {
       allowContainerNamespaceJoin: browserDockerCfg.dangerouslyAllowContainerNamespaceJoin === true,
     });
     await ensureSandboxBrowserImage(browserImage);
+    // Derive effective CDP source range: explicit config > Docker network gateway > fail-closed.
+    let effectiveCdpSourceRange = cdpSourceRange;
+    if (!effectiveCdpSourceRange) {
+      const gateway = await readDockerNetworkGateway(browserDockerCfg.network);
+      if (gateway) {
+        effectiveCdpSourceRange = `${gateway}/32`;
+      }
+    }
+    if (!effectiveCdpSourceRange) {
+      throw new Error(
+        `Cannot derive CDP source range for sandbox browser on network "${browserDockerCfg.network}". ` +
+          `Set agents.defaults.sandbox.browser.cdpSourceRange explicitly.`,
+      );
+    }
     const args = buildSandboxCreateArgs({
       name: containerName,
       cfg: browserDockerCfg,
@@ -258,9 +273,7 @@ export async function ensureSandboxBrowser(params: {
     args.push("-e", `OPENCLAW_BROWSER_HEADLESS=${params.cfg.browser.headless ? "1" : "0"}`);
     args.push("-e", `OPENCLAW_BROWSER_ENABLE_NOVNC=${params.cfg.browser.enableNoVnc ? "1" : "0"}`);
     args.push("-e", `OPENCLAW_BROWSER_CDP_PORT=${params.cfg.browser.cdpPort}`);
-    if (cdpSourceRange) {
-      args.push("-e", `${CDP_SOURCE_RANGE_ENV_KEY}=${cdpSourceRange}`);
-    }
+    args.push("-e", `${CDP_SOURCE_RANGE_ENV_KEY}=${effectiveCdpSourceRange}`);
     args.push("-e", `OPENCLAW_BROWSER_VNC_PORT=${params.cfg.browser.vncPort}`);
     args.push("-e", `OPENCLAW_BROWSER_NOVNC_PORT=${params.cfg.browser.noVncPort}`);
     // Chromium's setuid/namespace sandbox cannot work inside Docker containers
