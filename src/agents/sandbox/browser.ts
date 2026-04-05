@@ -233,7 +233,7 @@ export async function ensureSandboxBrowser(params: {
     if (!effectiveCdpSourceRange) {
       const gateway = await readDockerNetworkGateway(browserDockerCfg.network);
       if (gateway) {
-        effectiveCdpSourceRange = `${gateway}/32`;
+        effectiveCdpSourceRange = `${gateway}/${gateway.includes(":") ? 128 : 32}`;
       }
     }
     if (!effectiveCdpSourceRange) {
